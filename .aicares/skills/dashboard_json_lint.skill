@@ -1,0 +1,86 @@
+You are an autonomous code-maintenance agent. Your task is to scan the codebase for Grafana dashboard JSON files and apply validation, formatting, and schema normalization fixes. Follow every instruction below precisely. Do not ask questions. Do not make changes outside the scope defined here.
+
+---
+
+## SCOPE: Which files to process
+
+- Target files: any `.json` file where the top-level object contains BOTH a `"panels"` array AND a `"schemaVersion"` integer field. These are Grafana dashboard files.
+- Also consider files in paths containing `grafana`, `dashboards`, or `monitoring` as a directory name component, even if the filename is generic.
+- Skip files that are not valid JSON (log the path as unparseable and move on).
+- Skip any file larger than 5 MB.
+- Skip files inside `node_modules/`, `vendor/`, `.git/`, or any directory named `__snapshots__`.
+- Skip files that have a top-level `"__inputs"` array AND a `"__requires"` array simultaneously — these are Grafana provisioning export templates that may have intentional placeholders; do not modify them.
+
+---
+
+## FIXES TO APPLY
+
+Apply all of the following fixes to each qualifying file. Make all fixes in a single write pass per file. If a file requires no changes, do not write it (preserve original mtime where possible).
+
+---
+
+### 1. Update `schemaVersion`
+
+- If `schemaVersion` is less than `36`, set it to `36`.
+- Do not change it if it is already `36` or higher.
+- Rationale: schema versions below 36 are no longer supported by current Grafana (v10+).
+
+---
+
+### 2. Remove deprecated top-level fields
+
+Remove the following top-level keys entirely if present (they are ignored or harmful in current Grafana):
+
+- `"__requires"` — only when `"__inputs"` is absent. (Files where both are present are already excluded above.)
+- `"iteration"` — legacy field, no longer used.
+- `"hideControls"` — removed in Grafana 8.
+- `"style"` — removed in Grafana 9 (the string value controlling light/dark theme at dashboard level).
+- `"timepicker"` — only when its value is exactly an empty object `{}`. Do NOT remove `"timepicker"` if it contains any keys whatsoever, including keys whose values are empty strings, empty arrays, or `null`.
+- `"graphTooltip"` — only when its value is exactly the integer `0` (this is the default; omitting it is equivalent). Do NOT remove it if the value is `1` or `2`.
+
+---
+
+### 3. Normalize top-level field ordering
+
+Reorder top-level keys to match the canonical Grafana dashboard spec order below. Keys not in this list must be appended after the listed keys, sorted alphabetically among themselves.
+
+Canonical order:
+1. `title`
+2. `uid`
+3. `description`
+4. `schemaVersion`
+5. `version`
+6. `revision`
+7. `editable`
+8. `fiscalYearStartMonth`
+9. `graphTooltip`
+10. `tags`
+11. `time`
+12. `timepicker`
+13. `timezone`
+14. `refresh`
+15. `panels`
+16. `templating`
+17. `annotations`
+18. `links`
+
+Keys that are absent from the file are simply omitted from the output — do not insert keys that did not already exist.
+
+---
+
+### 4. Fix panel-level deprecated properties
+
+For every object in the top-level `"panels"` array, and recursively for every object in any nested `"panels"` array found inside row panels (i.e., panels where `"type"` is `"row"`), apply the following fixes.
+
+Do not recurse into `"panels"` arrays found anywhere else (e.g., inside `"fieldConfig"` or query result objects).
+
+---
+
+#### 4a. Remove `"minSpan"`
+Remove the `"minSpan"` key unconditionally if present. It has been replaced by `"gridPos"` sizing and has no effect in current Grafana.
+
+---
+
+#### 4b. Remove `"repeatDirection"` when meaningless
+Remove `"repeatDirection"` only when ALL of the following are true:
+- Its value is

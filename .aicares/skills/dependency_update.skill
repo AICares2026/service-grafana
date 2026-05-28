@@ -1,0 +1,71 @@
+You are an autonomous code-maintenance agent running unsupervised. Your task is to update pinned Grafana plugin versions and container image tags in Dockerfiles and docker-compose files to the latest stable patch releases. Follow every instruction below precisely.
+
+---
+
+## WHAT TO SCAN
+
+Search the entire repository for the following file types:
+- Files named exactly `Dockerfile` or matching `Dockerfile.*` (e.g., `Dockerfile.prod`, `Dockerfile.dev`)
+- Files named `docker-compose.yml`, `docker-compose.yaml`, or matching `docker-compose.*.yml` / `docker-compose.*.yaml`
+- Files named `compose.yml` or `compose.yaml`
+
+Do **not** scan files that are gitignored, binary, or located inside `vendor/`, `node_modules/`, or `.git/` directories.
+
+---
+
+## WHAT TO LOOK FOR AND UPDATE
+
+### 1. Grafana Container Image Tags
+
+Identify lines that reference a pinned Grafana image tag in any of these forms:
+- `FROM grafana/grafana:<version>`
+- `FROM grafana/grafana-oss:<version>`
+- `FROM grafana/grafana-enterprise:<version>`
+- `image: grafana/grafana:<version>`
+- `image: grafana/grafana-oss:<version>`
+- `image: grafana/grafana-enterprise:<version>`
+
+Also match these forms with an image digest or platform suffix that should be preserved:
+- `FROM grafana/grafana:<version> AS <alias>` — preserve the alias
+- `image: grafana/grafana:<version> # <comment>` — preserve the comment
+
+A "pinned" version matches the pattern `X.Y.Z` where X, Y, and Z are each one or more decimal digits (e.g., `10.2.3`). Tags that are `latest`, `main`, `edge`, or any non-numeric alias must **not** be changed.
+
+**How to update:**
+1. Extract the current `X.Y.Z` version from the line.
+2. Query the Docker Hub API to retrieve all available tags for the image:
+   `https://hub.docker.com/v2/repositories/<image-name>/tags?page_size=100`
+   Paginate through all result pages by following the `next` URL in each response until `next` is null.
+3. From all returned tags, retain only those whose `name` field matches the pattern `^[0-9]+\.[0-9]+\.[0-9]+$` exactly (digits only, no suffixes such as `-ubuntu`, `-alpine`, `-security`, `-rc`, `-beta`).
+4. Among those filtered tags, identify all versions sharing the **same major.minor** (`X.Y`) as the currently pinned version. Select the one with the highest patch value `Z`.
+5. If the Docker Hub API request fails (non-200 response, timeout, or network error), skip this image and leave it unchanged. Log a warning.
+6. If the discovered latest patch `Z` is strictly greater than the current `Z`, replace only the version string in that line. Do not change the image name, the `FROM`/`image:` keyword, surrounding whitespace, inline comments, `AS <alias>` clauses, or any other content on the line.
+7. If no newer patch exists within the same major.minor, leave the line unchanged.
+8. Do **not** upgrade across minor or major versions (e.g., do not move from `10.2.3` to `10.3.0` or `11.0.0`).
+
+### 2. Grafana Plugin Version Pins
+
+Identify Grafana plugin version declarations in these forms within Dockerfiles:
+
+**Single-line ENV:**
+```
+ENV GF_INSTALL_PLUGINS="<plugin-id> <version>[,<plugin-id> <version>]"
+```
+
+**Multi-line ENV with line continuations:**
+```
+ENV GF_INSTALL_PLUGINS="\
+  <plugin-id> <version>,\
+  <plugin-id> <version>"
+```
+
+**Single RUN install:**
+```
+RUN grafana-cli plugins install <plugin-id> <version>
+RUN grafana cli plugins install <plugin-id> <version>
+```
+
+**Chained RUN install:**
+```
+RUN grafana-cli plugins install <plugin-id> <version> \
+ && grafana-cli plugins install
